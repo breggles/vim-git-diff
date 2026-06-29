@@ -77,14 +77,30 @@ public sealed class Driver
 
         var scriptText = new VimScriptBuilder().Build(plan);
 
-        using var script = TempScriptFile.Create(scriptText);
+        var script = TempScriptFile.Create(scriptText);
 
         var vimExe = VimDiscovery.Resolve(options.VimExecutable, Environment.GetEnvironmentVariable);
 
         var launcher = new VimLauncher();
 
-        var exit = launcher.Launch(vimExe, script.Path);
+        LaunchResult result;
 
-        return exit == 0 ? ExitCode.Ok : ExitCode.Other;
+        try
+        {
+            result = launcher.Launch(vimExe, script.Path);
+        }
+        catch
+        {
+            script.Dispose();
+
+            throw;
+        }
+
+        if (!result.Detached)
+        {
+            script.Dispose();
+        }
+
+        return result.ExitCode == 0 ? ExitCode.Ok : ExitCode.Other;
     }
 }

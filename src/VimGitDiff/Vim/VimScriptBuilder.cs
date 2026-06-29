@@ -31,7 +31,9 @@ public sealed class VimScriptBuilder
 
         sb.AppendLine("set nomore");
 
-        sb.AppendLine("autocmd VimLeave * silent! call delete(expand('<sfile>'))");
+        sb.AppendLine("let s:vgd_script = expand('<sfile>:p')");
+
+        sb.AppendLine("autocmd VimLeave * silent! call delete(s:vgd_script)");
 
         var first = true;
 

@@ -1,13 +1,25 @@
+using System;
 using System.Diagnostics;
 
 using VimGitDiff.Errors;
 
 namespace VimGitDiff.Vim;
 
+public readonly record struct LaunchResult(int ExitCode, bool Detached);
+
 public sealed class VimLauncher
 {
-    public int Launch(string vimExecutable, string scriptPath)
+    public static bool IsGui(string vimExecutable)
     {
+        var name = System.IO.Path.GetFileNameWithoutExtension(vimExecutable);
+
+        return string.Equals(name, "gvim", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public LaunchResult Launch(string vimExecutable, string scriptPath)
+    {
+        var detach = IsGui(vimExecutable);
+
         var psi = new ProcessStartInfo
         {
             FileName = vimExecutable,
@@ -31,9 +43,14 @@ public sealed class VimLauncher
                 throw new VimNotFoundException($"failed to start {vimExecutable}");
             }
 
+            if (detach)
+            {
+                return new LaunchResult(0, Detached: true);
+            }
+
             process.WaitForExit();
 
-            return process.ExitCode;
+            return new LaunchResult(process.ExitCode, Detached: false);
         }
         catch (System.IO.FileNotFoundException ex)
         {

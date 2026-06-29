@@ -4,6 +4,10 @@ A command-line tool that shows git diffs in Vim, the way `git diff` shows
 them in your terminal. Each changed file opens in its own tab as a
 side-by-side Vim diff. By default it launches gvim.
 
+When it launches gvim (the GUI), control returns to your shell immediately;
+the gvim window cleans up its own temp script when you quit. A terminal
+`vim` stays attached to the console until you quit it.
+
 ## Why
 
 `git diff` is great for skimming small changes, but for non-trivial diffs

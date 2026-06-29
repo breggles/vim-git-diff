@@ -25,7 +25,9 @@ public class VimScriptBuilderTests
 
         Assert.Contains("set diffopt+=linematch:60", script);
 
-        Assert.Contains("autocmd VimLeave * silent! call delete(expand('<sfile>'))", script);
+        Assert.Contains("let s:vgd_script = expand('<sfile>:p')", script);
+
+        Assert.Contains("autocmd VimLeave * silent! call delete(s:vgd_script)", script);
     }
 
     [Fact]
