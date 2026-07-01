@@ -4,4 +4,8 @@ using VimGitDiff.Git;
 
 namespace VimGitDiff.Vim;
 
-public sealed record DiffPlan(string RepoRoot, GitRefSpec Refs, IReadOnlyList<ChangedFile> Files);
+public sealed record DiffPlan(
+    string RepoRoot,
+    GitRefSpec Refs,
+    IReadOnlyList<ChangedFile> Files,
+    IReadOnlyDictionary<(int FileIndex, bool IsLeft), string>? ContentPaths = null);

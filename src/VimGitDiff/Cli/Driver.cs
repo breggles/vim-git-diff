@@ -73,7 +73,9 @@ public sealed class Driver
             filtered = filtered.GetRange(0, cap);
         }
 
-        var plan = new DiffPlan(repo.Root, inputs.Refs, filtered);
+        var extracted = new ContentExtractor(_git).Extract(repo.Root, inputs.Refs, filtered);
+
+        var plan = new DiffPlan(repo.Root, inputs.Refs, filtered, extracted.Paths);
 
         var scriptText = new VimScriptBuilder().Build(plan);
 
@@ -93,14 +95,26 @@ public sealed class Driver
         {
             script.Dispose();
 
+            DisposeAll(extracted.Files);
+
             throw;
         }
 
         if (!result.Detached)
         {
             script.Dispose();
+
+            DisposeAll(extracted.Files);
         }
 
         return result.ExitCode == 0 ? ExitCode.Ok : ExitCode.Other;
+    }
+
+    private static void DisposeAll(IReadOnlyList<TempContentFile> files)
+    {
+        foreach (var file in files)
+        {
+            file.Dispose();
+        }
     }
 }

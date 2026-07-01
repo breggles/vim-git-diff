@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 using System.Text;
 
 using VimGitDiff.Git;
@@ -8,17 +7,6 @@ namespace VimGitDiff.Vim;
 
 public sealed class VimScriptBuilder
 {
-    private readonly bool _quoteForCmd;
-
-    public VimScriptBuilder() : this(RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-    {
-    }
-
-    public VimScriptBuilder(bool quoteForCmd)
-    {
-        _quoteForCmd = quoteForCmd;
-    }
-
     public string Build(DiffPlan plan)
     {
         var sb = new StringBuilder();
@@ -33,13 +21,15 @@ public sealed class VimScriptBuilder
 
         sb.AppendLine("let s:vgd_script = expand('<sfile>:p')");
 
-        sb.AppendLine("autocmd VimLeave * silent! call delete(s:vgd_script)");
+        var contentPaths = CollectContentPaths(plan);
+
+        AppendCleanupAutocmd(sb, contentPaths);
 
         var first = true;
 
-        foreach (var file in plan.Files)
+        for (var i = 0; i < plan.Files.Count; i++)
         {
-            AppendFilePair(sb, plan, file, first);
+            AppendFilePair(sb, plan, plan.Files[i], i, first);
 
             first = false;
         }
@@ -51,7 +41,40 @@ public sealed class VimScriptBuilder
         return sb.ToString();
     }
 
-    private void AppendFilePair(StringBuilder sb, DiffPlan plan, ChangedFile file, bool isFirstTab)
+    private static List<string> CollectContentPaths(DiffPlan plan)
+    {
+        var paths = new List<string>();
+
+        if (plan.ContentPaths == null)
+        {
+            return paths;
+        }
+
+        foreach (var path in plan.ContentPaths.Values)
+        {
+            paths.Add(path);
+        }
+
+        return paths;
+    }
+
+    private static void AppendCleanupAutocmd(StringBuilder sb, List<string> contentPaths)
+    {
+        sb.Append("let s:vgd_temps = [s:vgd_script");
+
+        foreach (var path in contentPaths)
+        {
+            sb.Append(", ");
+
+            sb.Append(VimStringLiteral.Quote(path));
+        }
+
+        sb.AppendLine("]");
+
+        sb.AppendLine("autocmd VimLeave * silent! call map(s:vgd_temps, 'delete(v:val)')");
+    }
+
+    private void AppendFilePair(StringBuilder sb, DiffPlan plan, ChangedFile file, int fileIndex, bool isFirstTab)
     {
         var refA = plan.Refs.RefA;
 
@@ -65,27 +88,21 @@ public sealed class VimScriptBuilder
 
         var basenameB = Basename(file.PathB ?? file.DisplayPath);
 
-        if (isFirstTab)
-        {
-            sb.AppendLine("tabnew");
-        }
-        else
-        {
-            sb.AppendLine("tabnew");
-        }
+        sb.AppendLine("tabnew");
 
-        AppendSide(sb, plan.RepoRoot, refA, file.PathA, labelA, basenameA, isLeft: true);
+        AppendSide(sb, plan, refA, file.PathA, fileIndex, labelA, basenameA, isLeft: true);
 
         sb.AppendLine("vert new");
 
-        AppendSide(sb, plan.RepoRoot, refB, file.PathB, labelB, basenameB, isLeft: false);
+        AppendSide(sb, plan, refB, file.PathB, fileIndex, labelB, basenameB, isLeft: false);
     }
 
     private void AppendSide(
         StringBuilder sb,
-        string repoRoot,
+        DiffPlan plan,
         string @ref,
         string? path,
+        int fileIndex,
         string label,
         string basename,
         bool isLeft)
@@ -96,7 +113,7 @@ public sealed class VimScriptBuilder
 
         if (path != null)
         {
-            AppendReadCommand(sb, repoRoot, @ref, path);
+            AppendReadCommand(sb, plan, @ref, path, fileIndex, isLeft);
 
             sb.AppendLine("silent! 1delete _");
         }
@@ -110,46 +127,22 @@ public sealed class VimScriptBuilder
         sb.AppendLine("diffthis");
     }
 
-    private void AppendReadCommand(StringBuilder sb, string repoRoot, string @ref, string path)
+    private void AppendReadCommand(StringBuilder sb, DiffPlan plan, string @ref, string path, int fileIndex, bool isLeft)
     {
         if (@ref == GitRefSpec.WorkingTree)
         {
-            var full = System.IO.Path.Combine(repoRoot, path.Replace('/', System.IO.Path.DirectorySeparatorChar));
+            var full = System.IO.Path.Combine(plan.RepoRoot, path.Replace('/', System.IO.Path.DirectorySeparatorChar));
 
             sb.AppendLine("silent 0read " + VimFilenameEscaper.Escape(full));
 
             return;
         }
 
-        var spec = @ref == GitRefSpec.Index ? ":" + path : @ref + ":" + path;
+        var contentPath = plan.ContentPaths?[(fileIndex, isLeft)]
+            ?? throw new System.InvalidOperationException(
+                $"missing extracted content for file {fileIndex} ({(isLeft ? "left" : "right")})");
 
-        var quoted = BuildShellCommand(repoRoot, spec);
-
-        sb.AppendLine("silent 0read !" + quoted);
-    }
-
-    private string BuildShellCommand(string repoRoot, string spec)
-    {
-        if (_quoteForCmd)
-        {
-            return string.Join(' ', new[]
-            {
-                "git",
-                "-C",
-                VimShellQuoter.QuoteForCmd(repoRoot),
-                "show",
-                VimShellQuoter.QuoteForCmd(spec),
-            });
-        }
-
-        return string.Join(' ', new[]
-        {
-            "git",
-            "-C",
-            VimShellQuoter.QuoteForPosix(repoRoot),
-            "show",
-            VimShellQuoter.QuoteForPosix(spec),
-        });
+        sb.AppendLine("silent 0read " + VimFilenameEscaper.Escape(contentPath));
     }
 
     private static string Basename(string path)

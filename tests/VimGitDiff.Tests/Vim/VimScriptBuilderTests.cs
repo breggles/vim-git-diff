@@ -9,17 +9,26 @@ namespace VimGitDiff.Tests.Vim;
 
 public class VimScriptBuilderTests
 {
-    private static string BuildPosix(DiffPlan plan)
+    private static string Build(DiffPlan plan)
     {
-        return new VimScriptBuilder(quoteForCmd: false).Build(plan);
+        return new VimScriptBuilder().Build(plan);
+    }
+
+    private static DiffPlan Plan(
+        string root,
+        GitRefSpec refs,
+        IReadOnlyList<ChangedFile> files,
+        IReadOnlyDictionary<(int, bool), string>? content = null)
+    {
+        return new DiffPlan(root, refs, files, content);
     }
 
     [Fact]
     public void Header_contains_diffopt_and_cleanup_autocmd()
     {
-        var plan = new DiffPlan("/repo", GitRefSpec.HeadVsWorkingTree, new List<ChangedFile>());
+        var plan = Plan("/repo", GitRefSpec.HeadVsWorkingTree, new List<ChangedFile>());
 
-        var script = BuildPosix(plan);
+        var script = Build(plan);
 
         Assert.Contains("set diffopt+=algorithm:histogram", script);
 
@@ -27,22 +36,31 @@ public class VimScriptBuilderTests
 
         Assert.Contains("let s:vgd_script = expand('<sfile>:p')", script);
 
-        Assert.Contains("autocmd VimLeave * silent! call delete(s:vgd_script)", script);
+        Assert.Contains("let s:vgd_temps = [s:vgd_script]", script);
+
+        Assert.Contains("autocmd VimLeave * silent! call map(s:vgd_temps, 'delete(v:val)')", script);
     }
 
     [Fact]
-    public void Modified_file_HEAD_vs_working_tree()
+    public void Modified_file_HEAD_vs_working_tree_reads_extracted_content_no_shellout()
     {
-        var plan = new DiffPlan(
+        var content = new Dictionary<(int, bool), string> { [(0, true)] = "/tmp/vgd/left.content" };
+
+        var plan = Plan(
             "/repo",
             GitRefSpec.HeadVsWorkingTree,
-            new List<ChangedFile> { new(ChangeStatus.Modified, "foo.cs", "foo.cs") });
+            new List<ChangedFile> { new(ChangeStatus.Modified, "foo.cs", "foo.cs") },
+            content);
 
-        var script = BuildPosix(plan);
+        var script = Build(plan);
 
         Assert.Contains("tabnew", script);
 
-        Assert.Contains("silent 0read !git -C '/repo' show 'HEAD:foo.cs'", script);
+        Assert.Contains("silent 0read /tmp/vgd/left.content", script);
+
+        Assert.DoesNotContain("git show", script);
+
+        Assert.DoesNotContain("0read !", script);
 
         Assert.Contains("foo.cs@HEAD", script);
 
@@ -54,29 +72,52 @@ public class VimScriptBuilderTests
     }
 
     [Fact]
-    public void Added_file_left_side_is_missing()
+    public void Content_temp_files_are_added_to_cleanup_list()
     {
-        var plan = new DiffPlan(
+        var content = new Dictionary<(int, bool), string>
+        {
+            [(0, true)] = "/tmp/vgd/left.content",
+        };
+
+        var plan = Plan(
             "/repo",
             GitRefSpec.HeadVsWorkingTree,
-            new List<ChangedFile> { new(ChangeStatus.Added, null, "new.cs") });
+            new List<ChangedFile> { new(ChangeStatus.Modified, "foo.cs", "foo.cs") },
+            content);
 
-        var script = BuildPosix(plan);
+        var script = Build(plan);
+
+        Assert.Contains("let s:vgd_temps = [s:vgd_script, '/tmp/vgd/left.content']", script);
+    }
+
+    [Fact]
+    public void Added_file_left_side_is_missing()
+    {
+        var content = new Dictionary<(int, bool), string> { [(0, false)] = "/tmp/vgd/right.content" };
+
+        var plan = Plan(
+            "/repo",
+            GitRefSpec.HeadVsWorkingTree,
+            new List<ChangedFile> { new(ChangeStatus.Added, null, "new.cs") },
+            content);
+
+        var script = Build(plan);
 
         Assert.Contains("new.cs@HEAD\\ \\(missing\\)", script);
-
-        Assert.DoesNotContain("git -C '/repo' show 'HEAD:new.cs'", script);
     }
 
     [Fact]
     public void Deleted_file_right_side_is_missing()
     {
-        var plan = new DiffPlan(
+        var content = new Dictionary<(int, bool), string> { [(0, true)] = "/tmp/vgd/left.content" };
+
+        var plan = Plan(
             "/repo",
             GitRefSpec.HeadVsWorkingTree,
-            new List<ChangedFile> { new(ChangeStatus.Deleted, "gone.cs", null) });
+            new List<ChangedFile> { new(ChangeStatus.Deleted, "gone.cs", null) },
+            content);
 
-        var script = BuildPosix(plan);
+        var script = Build(plan);
 
         Assert.Contains("gone.cs@HEAD", script);
 
@@ -84,48 +125,41 @@ public class VimScriptBuilderTests
     }
 
     [Fact]
-    public void Index_ref_uses_colon_path_spec()
+    public void Working_tree_side_uses_local_read()
     {
-        var plan = new DiffPlan(
-            "/repo",
-            GitRefSpec.HeadVsIndex,
-            new List<ChangedFile> { new(ChangeStatus.Modified, "foo.cs", "foo.cs") });
+        var content = new Dictionary<(int, bool), string> { [(0, true)] = "/tmp/vgd/left.content" };
 
-        var script = BuildPosix(plan);
-
-        Assert.Contains("git -C '/repo' show ':foo.cs'", script);
-
-        Assert.Contains("foo.cs@index", script);
-    }
-
-    [Fact]
-    public void Working_tree_side_uses_local_read_no_shellout()
-    {
-        var plan = new DiffPlan(
+        var plan = Plan(
             "/repo",
             GitRefSpec.IndexVsWorkingTree,
-            new List<ChangedFile> { new(ChangeStatus.Modified, "foo.cs", "foo.cs") });
+            new List<ChangedFile> { new(ChangeStatus.Modified, "foo.cs", "foo.cs") },
+            content);
 
-        var script = BuildPosix(plan);
+        var script = Build(plan);
 
         Assert.Matches(@"silent 0read (?:\\\\|/)repo(?:\\\\|/)foo\.cs", script);
-
-        Assert.Contains("git -C '/repo' show ':foo.cs'", script);
     }
 
     [Fact]
     public void Two_files_open_two_tabs()
     {
-        var plan = new DiffPlan(
+        var content = new Dictionary<(int, bool), string>
+        {
+            [(0, true)] = "/tmp/vgd/a.content",
+            [(1, true)] = "/tmp/vgd/b.content",
+        };
+
+        var plan = Plan(
             "/repo",
             GitRefSpec.HeadVsWorkingTree,
             new List<ChangedFile>
             {
                 new(ChangeStatus.Modified, "a.cs", "a.cs"),
                 new(ChangeStatus.Modified, "b.cs", "b.cs"),
-            });
+            },
+            content);
 
-        var script = BuildPosix(plan);
+        var script = Build(plan);
 
         var firstTab = script.IndexOf("tabnew", System.StringComparison.Ordinal);
 
@@ -137,16 +171,19 @@ public class VimScriptBuilderTests
     }
 
     [Fact]
-    public void Rename_uses_different_paths_each_side()
+    public void Rename_uses_different_content_each_side()
     {
-        var plan = new DiffPlan(
+        var content = new Dictionary<(int, bool), string> { [(0, true)] = "/tmp/vgd/old.content" };
+
+        var plan = Plan(
             "/repo",
             GitRefSpec.HeadVsWorkingTree,
-            new List<ChangedFile> { new(ChangeStatus.Renamed, "old.cs", "new.cs") });
+            new List<ChangedFile> { new(ChangeStatus.Renamed, "old.cs", "new.cs") },
+            content);
 
-        var script = BuildPosix(plan);
+        var script = Build(plan);
 
-        Assert.Contains("git -C '/repo' show 'HEAD:old.cs'", script);
+        Assert.Contains("silent 0read /tmp/vgd/old.content", script);
 
         Assert.Contains("new.cs@working\\ tree", script);
     }

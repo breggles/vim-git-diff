@@ -24,7 +24,7 @@ public static class Program
 
             if (options.Version)
             {
-                Console.Out.WriteLine("vim-git-diff 0.1.0");
+                Console.Out.WriteLine("vim-git-diff " + VersionInfo.Current());
 
                 return (int)ExitCode.Ok;
             }
